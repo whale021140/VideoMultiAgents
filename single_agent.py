@@ -3,26 +3,32 @@ import time
 import json
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
-from langchain.agents import create_openai_tools_agent, AgentExecutor
+# [REAL API - GEMINI] Replaced langchain_openai with ChatGemini
+from langchain_gemini_wrapper import ChatGemini
+# [REAL API - GEMINI] Replaced create_openai_tools_agent with create_gemini_tools_agent
+from langchain_gemini_agent import create_gemini_tools_agent
+from langchain.agents import AgentExecutor
 
 # Import utility functions (e.g., for post-processing and question sentence generation)
 from util import post_process, create_question_sentence, prepare_intermediate_steps
 
-# Retrieve the OpenAI API key from the environment
-openai_api_key = os.getenv("OPENAI_API_KEY")
+# [REAL API - GEMINI] Retrieve the Gemini API key from the environment
+gemini_api_key = os.getenv("GEMINI_API_KEY")
 
-# Instantiate the LLM with appropriate configurations
-llm_openai = ChatOpenAI(
-    api_key=openai_api_key,
-    model='gpt-4o',
-    temperature=0.7,
-    disable_streaming=True
+if not gemini_api_key:
+    raise ValueError("[REAL API - GEMINI] GEMINI_API_KEY environment variable not set")
+
+# [REAL API - GEMINI] Instantiate the LLM with appropriate configurations
+llm_gemini = ChatGemini(
+    api_key=gemini_api_key,
+    model_name='gemini-2.0-flash',
+    temperature=0.7
 )
 
 def create_agent(llm, tools: list, system_prompt: str):
     """
     Create an agent with the given system prompt and tools.
+    [REAL API - GEMINI] Uses create_gemini_tools_agent instead of create_openai_tools_agent
     """
     prompt = ChatPromptTemplate.from_messages(
         [
@@ -31,7 +37,8 @@ def create_agent(llm, tools: list, system_prompt: str):
             MessagesPlaceholder(variable_name="agent_scratchpad"),
         ]
     )
-    agent = create_openai_tools_agent(llm, tools, prompt)
+    # [REAL API - GEMINI] Use Gemini agent creation function
+    agent = create_gemini_tools_agent(llm, tools, prompt)
     executor = AgentExecutor(agent=agent, tools=tools, return_intermediate_steps=True)
     return executor
 
@@ -63,7 +70,8 @@ def execute_single_agent(tools, use_summary_info):
     question_sentence = create_question_sentence(target_question_data)
 
     # Create the single agent with the defined system prompt and tools
-    single_agent = create_agent(llm_openai, tools, system_prompt=system_prompt)
+    # [REAL API - GEMINI] Use Gemini LLM instead of OpenAI
+    single_agent = create_agent(llm_gemini, tools, system_prompt=system_prompt)
 
     # Print the input message for debugging purposes
     print("******** Single Agent Input Message **********")

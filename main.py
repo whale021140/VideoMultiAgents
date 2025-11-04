@@ -13,12 +13,22 @@ import multi_agent_report_star
 import multi_agent_debate
 import traceback
 
+# [DEMO MODE] - Check if running in demo mode with mock APIs
+USE_MOCK_API = os.getenv('USE_MOCK_API', 'false').lower() == 'true'
+
 # Import required tools for video analysis
-from tools.retrieve_video_clip_captions import retrieve_video_clip_captions
-from tools.analyze_video_gpt4o import analyze_video_gpt4o
-from tools.analyze_video_gemini import analyze_video_gemini
-from tools.retrieve_video_scene_graph import retrieve_video_scene_graph
-from tools.analyze_all_gpt4o import analyze_all_gpt4o
+# [DEMO MODE] - Import mock APIs if enabled
+if USE_MOCK_API:
+    print("[DEMO MODE] Using mock APIs for demonstration")
+    from mock_apis.mock_openai import MockOpenAI
+    from mock_apis.mock_gemini import MockGemini
+    from mock_apis.mock_vision import MockVisionExtractor
+else:
+    from tools.retrieve_video_clip_captions import retrieve_video_clip_captions
+    from tools.analyze_video_gpt4o import analyze_video_gpt4o
+    from tools.analyze_video_gemini import analyze_video_gemini
+    from tools.retrieve_video_scene_graph import retrieve_video_scene_graph
+    from tools.analyze_all_gpt4o import analyze_all_gpt4o
 
 def get_tools(modality):
     """
@@ -97,7 +107,18 @@ def get_unprocessed_videos(question_file_path, max_items=1000):
     dict_data = read_json_file(question_file_path)
     unprocessed_videos = []
     for i, (video_id, json_data) in enumerate(list(dict_data.items())[:max_items]):
-        if "pred" not in json_data.keys() or json_data["pred"] == -2:
+        # Skip metadata entries like "_comment"
+        if not isinstance(json_data, dict):
+            continue
+        
+        # Priority: check metadata.pred first (for real_mode), then root-level pred
+        if "metadata" in json_data and isinstance(json_data["metadata"], dict):
+            pred_value = json_data["metadata"].get("pred", None)
+        else:
+            pred_value = json_data.get("pred", None)
+        
+        # Include unprocessed videos (pred == -2)
+        if pred_value == -2:
             unprocessed_videos.append((video_id, json_data))
     return unprocessed_videos
 
@@ -114,9 +135,23 @@ def main():
                        help="Number of videos to process. Defaults to all.")
     args = parser.parse_args()
 
+    # [DEMO MODE] - Handle demo dataset
+    if args.dataset == "demo":
+        print("\n" + "="*80)
+        print("[DEMO MODE] Running in demonstration mode")
+        print("="*80)
+        print("Using mock APIs and demo data for testing")
+        print("To use real models and datasets, set USE_MOCK_API=false and provide real API keys")
+        print("="*80 + "\n")
+        
+        os.environ["QUESTION_FILE_PATH"] = "./demo_data/qa/demo_qa.json"
+        os.environ["CAPTIONS_FILE"] = "./demo_data/captions/demo_captions.json"
+        os.environ["GRAPH_DATA_PATH"] = "./demo_data/features/demo_features.json"
+        os.environ["SUMMARY_CACHE_JSON_PATH"] = "./demo_data/features/demo_features.json"
+        os.environ["VIDEO_DIR_PATH"] = "./demo_data/videos/"
+        os.environ["FRAME_NUM"] = "8"
     # Set dataset-specific environment variables
-    os.environ["DATASET"] = args.dataset
-    if args.dataset == "egoschema":
+    elif args.dataset == "egoschema":
         os.environ["QUESTION_FILE_PATH"] = f"path/to/egoschema/fullset_{args.agents}_{args.modality}.json"
         os.environ["CAPTIONS_FILE"] = "path/to/egoschema_captions_gpt4o_caption_guided.json"
         os.environ["GRAPH_DATA_PATH"] = "path/to/egoschema_graph_captions.json"
@@ -150,8 +185,25 @@ def main():
         os.environ["CAPTIONS_FILE"] = "path/to/hourvideo_local_captions.json"
         os.environ["SUMMARY_CACHE_JSON_PATH"] = "path/to/hourvideo_summary_cache.json"
         os.environ["GRAPH_DATA_PATH"] = "path/to/hourvideo_graph_captions.json"
+    elif args.dataset == "real_mode":  # [REAL MODE - GEMINI] Real workflow demo with true Gemini API
+        print("\n" + "="*80)
+        print("[REAL MODE - GEMINI] Running real workflow with Gemini API")
+        print("="*80)
+        print("Using true Gemini API with multi-modality agent disagreement resolution")
+        print("Demonstrating Gemini's ability to reconcile conflicting predictions")
+        print("="*80 + "\n")
+        
+        os.environ["QUESTION_FILE_PATH"] = "./real_mode_demo_qa.json"
+        os.environ["CAPTIONS_FILE"] = "./demo_data/captions/demo_captions.json"
+        os.environ["GRAPH_DATA_PATH"] = "./demo_data/features/demo_features.json"
+        os.environ["SUMMARY_CACHE_JSON_PATH"] = "./demo_data/features/demo_features.json"
+        os.environ["VIDEO_DIR_PATH"] = "./demo_data/videos/"
+        os.environ["FRAME_NUM"] = "8"
     else:
         raise ValueError(f"Unknown dataset: {args.dataset}")
+    
+    # [DEMO MODE] - Set dataset environment variable (moved after condition for demo)
+    os.environ["DATASET"] = args.dataset
 
     # Get list of unprocessed videos
     unprocessed_videos = get_unprocessed_videos(os.getenv("QUESTION_FILE_PATH"), max_items=args.max_items)

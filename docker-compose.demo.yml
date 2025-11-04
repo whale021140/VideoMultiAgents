@@ -1,0 +1,46 @@
+# [DEMO BUILD] - Simplified docker-compose for demonstration purposes
+# Production should use the original docker-compose.yml with proper volume mounts and GPU setup
+
+version: "3.8"
+
+services:
+  video_multi_agents_demo:
+    # [DEMO BUILD] Service name for demo environment
+    hostname: video_multi_agents_demo
+    container_name: video_multi_agents_demo_env
+    
+    # [DEMO BUILD] GPU configuration (remove if GPU not available)
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    runtime: nvidia
+    
+    # Interactive terminal
+    tty: true
+    stdin_open: true
+    
+    # Build configuration
+    build:
+      context: .
+      dockerfile: Dockerfile.demo
+    
+    # [DEMO BUILD] Reduced shared memory for demo (512MB instead of 64GB)
+    shm_size: '512m'
+    
+    # Volume mounts - only essential directories for demo
+    volumes:
+      # Mount project directory for live editing
+      - .:/root/VideoMultiAgents
+      # Mount demo data
+      - ./demo_data:/root/VideoMultiAgents/demo_data
+    
+    # Load environment variables from .env.demo
+    env_file:
+      - .env.demo
+    
+    # Working directory
+    working_dir: /root/VideoMultiAgents
+    
+    # [DEMO BUILD] You can run the demo test script with:
+    # docker compose -f docker-compose.demo.yml run video_multi_agents_demo python test_integration_demo.py
+    # Or start interactive shell:
+    # docker compose -f docker-compose.demo.yml run video_multi_agents_demo /bin/bash

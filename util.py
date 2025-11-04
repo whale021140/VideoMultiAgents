@@ -3,7 +3,7 @@ import time
 import requests
 import datetime
 from retry import retry
-from openai import OpenAI
+# [MIGRATION] Removed: from openai import OpenAI - no longer needed with Gemini
 import re
 import json
 import random
@@ -13,8 +13,9 @@ from filelock import FileLock
 from mimetypes import guess_type
 import numpy as np
 from typing import Literal
-from google import genai
-from google.genai import types
+# [REAL API - GEMINI] Import Gemini API
+import google.generativeai as google_genai
+from langchain_gemini_wrapper import ChatGemini
 
 # Function to encode a local image into data URL
 def local_image_to_data_url(image_path):
@@ -32,9 +33,21 @@ def local_image_to_data_url(image_path):
 
 
 @retry(tries=3, delay=3)
-def ask_gpt4_omni(openai_api_key="", prompt_text="", temperature=0.0, image_dir="", vid="", frame_num=18, detail="low", use_selected_images=None, json_schema=None):
+def ask_gpt4_omni_legacy(openai_api_key="", prompt_text="", temperature=0.0, image_dir="", vid="", frame_num=18, detail="low", use_selected_images=None, json_schema=None):
+    """
+    [MIGRATION] Legacy OpenAI GPT-4o function (deprecated)
+    
+    This function is kept for backward compatibility but should not be used.
+    Use ask_gemini_omni instead.
+    
+    [REAL API - GEMINI] This will fail if OpenAI API key is not provided.
+    """
+    try:
+        from openai import OpenAI
+    except ImportError:
+        raise ImportError("[MIGRATION] OpenAI not installed. Use ask_gemini_omni instead.")
+    
     model_name = "gpt-4o"
-
     client = OpenAI(api_key=openai_api_key)
 
     if image_dir != "" and vid != "":
@@ -84,9 +97,117 @@ def ask_gpt4_omni(openai_api_key="", prompt_text="", temperature=0.0, image_dir=
             response_format=json_schema
         )
 
-    print(f"ask_gpt4_omni: prompt_tokens={response.usage.prompt_tokens}, completion_tokens={response.usage.completion_tokens}, total_tokens={response.usage.total_tokens}")
+    print(f"ask_gpt4_omni_legacy: prompt_tokens={response.usage.prompt_tokens}, completion_tokens={response.usage.completion_tokens}, total_tokens={response.usage.total_tokens}")
 
     return response.choices[0].message.content
+
+
+@retry(tries=3, delay=3)
+def ask_gpt4_omni(gemini_api_key="", prompt_text="", temperature=0.0, image_dir="", vid="", frame_num=18, detail="low", use_selected_images=None, json_schema=None):
+    """
+    [REAL API - GEMINI] Gemini-based replacement for ask_gpt4_omni
+    
+    This function provides the same interface as the original ask_gpt4_omni
+    but uses Google Gemini instead of OpenAI GPT-4o.
+    
+    [REAL API - GEMINI] Makes actual calls to Google Gemini API.
+    [COMPATIBILITY] Maintains same return format as original function.
+    
+    Args:
+        gemini_api_key: Google Gemini API key (can also use GEMINI_API_KEY env var)
+        prompt_text: The prompt to send to Gemini
+        temperature: Response temperature (0.0-1.0)
+        image_dir: Directory containing image frames
+        vid: Video ID for frame lookup
+        frame_num: Number of frames to include
+        detail: Detail level for image analysis
+        use_selected_images: Pre-selected image paths
+        json_schema: Response format schema
+    
+    Returns:
+        str: Gemini's response
+    """
+    # [REAL API - GEMINI] Use provided key or environment variable
+    if not gemini_api_key:
+        gemini_api_key = os.getenv("GEMINI_API_KEY", "")
+    
+    if not gemini_api_key:
+        raise ValueError("[REAL API - GEMINI] GEMINI_API_KEY must be provided")
+    
+    # [REAL API - GEMINI] Configure Gemini
+    google_genai.configure(api_key=gemini_api_key)
+    model = google_genai.GenerativeModel("gemini-2.0-flash")
+    
+    if image_dir != "" and vid != "":
+        # [REAL API - GEMINI] Process images if provided
+        frame_path_list = sorted(glob.glob(os.path.join(image_dir, vid, "*")))
+        valid_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff"}
+        frame_path_list = [path for path in frame_path_list if os.path.splitext(path)[1].lower() in valid_extensions]
+
+        frames = []
+        if use_selected_images is not None:
+            selected_paths = use_selected_images
+        else:
+            if len(frame_path_list) <= frame_num:
+                selected_paths = frame_path_list
+            else:
+                # uniformly sample frames
+                indices = [int(round(x)) for x in np.linspace(0, len(frame_path_list) - 1, frame_num)]
+                selected_paths = [frame_path_list[i] for i in indices]
+
+        print(f'[REAL API - GEMINI] Processing {len(selected_paths)} frames')
+
+        # [REAL API - GEMINI] Upload images and create content
+        content_parts = [prompt_text]
+        for image_path in selected_paths:
+            try:
+                file = google_genai.upload_file(image_path)
+                content_parts.append(file)
+            except Exception as e:
+                print(f"[REAL API - GEMINI] Error uploading {image_path}: {e}")
+
+        # [REAL API - GEMINI] Generate response (with fallback for system_instruction)
+        try:
+            response = model.generate_content(
+                content_parts,
+                generation_config=google_genai.types.GenerationConfig(
+                    max_output_tokens=3000,
+                    temperature=temperature,
+                ),
+                system_instruction="You are a helpful expert in first person view video analysis. Provide detailed analysis.",
+            )
+        except (TypeError, ValueError):
+            # Fallback for Gemini API versions that don't support system_instruction
+            response = model.generate_content(
+                content_parts,
+                generation_config=google_genai.types.GenerationConfig(
+                    max_output_tokens=3000,
+                    temperature=temperature,
+                ),
+            )
+    else:
+        # [REAL API - GEMINI] Text-only response (with fallback for system_instruction)
+        try:
+            response = model.generate_content(
+                prompt_text,
+                generation_config=google_genai.types.GenerationConfig(
+                    max_output_tokens=3000,
+                    temperature=temperature,
+                ),
+                system_instruction="You are a helpful assistant.",
+            )
+        except (TypeError, ValueError):
+            # Fallback for Gemini API versions that don't support system_instruction
+            response = model.generate_content(
+                prompt_text,
+                generation_config=google_genai.types.GenerationConfig(
+                    max_output_tokens=3000,
+                    temperature=temperature,
+                ),
+            )
+
+    print(f"[REAL API - GEMINI] ask_gpt4_omni: Response received")
+    return response.text
 
 
 # @retry(tries=3, delay=3)
@@ -460,12 +581,22 @@ def create_star_organizer_prompt():
 
 
 def set_environment_variables(dataset:str, video_id:str, qa_json_data:dict):
-    if dataset == "egoschema": index_name = video_id
-    if dataset == "hourvideo": index_name = video_id
-    elif dataset == "nextqa" : index_name = video_id.split("_")[0]
-    elif dataset == "intentqa" : index_name = video_id.split("_")[0]
-    elif dataset == "momaqa" : index_name = qa_json_data["video_id"]
-    elif dataset == "hourvideo" : index_name = qa_json_data["video_id"]
+    if dataset == "egoschema": 
+        index_name = video_id
+    elif dataset == "nextqa": 
+        index_name = video_id.split("_")[0]
+    elif dataset == "intentqa": 
+        index_name = video_id.split("_")[0]
+    elif dataset == "momaqa": 
+        index_name = qa_json_data["video_id"]
+    elif dataset == "hourvideo": 
+        index_name = qa_json_data["video_id"]
+    elif dataset == "demo":  # [DEMO MODE] Handle demo dataset
+        index_name = video_id
+    elif dataset == "real_mode":  # [REAL MODE - GEMINI] Real workflow demo
+        index_name = video_id
+    else:
+        index_name = video_id
 
     if dataset == "egoschema":
         os.environ["VIDEO_FILE_NAME"] = video_id
@@ -476,6 +607,10 @@ def set_environment_variables(dataset:str, video_id:str, qa_json_data:dict):
         os.environ["VIDEO_FILE_NAME"] = qa_json_data["video_id"]
     elif dataset == "hourvideo":
         os.environ["VIDEO_FILE_NAME"] = qa_json_data["video_id"]
+    elif dataset == "demo":  # [DEMO MODE] Handle demo dataset
+        os.environ["VIDEO_FILE_NAME"] = qa_json_data.get("video_id", video_id)
+    elif dataset == "real_mode":  # [REAL MODE - GEMINI] Real workflow demo
+        os.environ["VIDEO_FILE_NAME"] = qa_json_data.get("map_vid_vidorid", video_id).replace("/", "-")
 
 
     os.environ["SUMMARY_INFO"] = json.dumps(get_video_summary(os.getenv("SUMMARY_CACHE_JSON_PATH"), os.getenv("VIDEO_FILE_NAME")))
@@ -488,17 +623,19 @@ def set_environment_variables(dataset:str, video_id:str, qa_json_data:dict):
 
 def post_process(message:str):
 
-    if os.getenv("DATASET") == "egoschema" or os.getenv("DATASET") == "nextqa" or os.getenv("DATASET") == "intentqa" or os.getenv("DATASET") == "hourvideo":
+    if os.getenv("DATASET") == "egoschema" or os.getenv("DATASET") == "nextqa" or os.getenv("DATASET") == "intentqa" or os.getenv("DATASET") == "hourvideo" or os.getenv("DATASET") == "real_mode":
         prediction_num = post_process_5choice(message)
         if prediction_num == -1:
             prompt = message + "\n\nPlease retrieve the final answer from the sentence above. Your response should be one of the following options: Option A, Option B, Option C, Option D, Option E."
-            response_data = ask_gpt4_omni(openai_api_key=os.getenv("OPENAI_API_KEY"), prompt_text=prompt)
+            # [REAL API - GEMINI] Replaced ask_gpt4_omni with Gemini version
+            response_data = ask_gpt4_omni(gemini_api_key=os.getenv("GEMINI_API_KEY"), prompt_text=prompt)
             prediction_num = post_process(response_data)
         # print ("prediction_num:", prediction_num)
         return prediction_num
     elif os.getenv("DATASET") == "momaqa":
         prompt = message + "\n\nExtract and output only the content that immediately follows \"- Pred:\" on its line. Do not include any additional text or formatting."
-        response_data = ask_gpt4_omni(openai_api_key=os.getenv("OPENAI_API_KEY"), prompt_text=prompt)
+        # [REAL API - GEMINI] Replaced ask_gpt4_omni with Gemini version
+        response_data = ask_gpt4_omni(gemini_api_key=os.getenv("GEMINI_API_KEY"), prompt_text=prompt)
         return response_data
     else:
         print ("*************** Invalid dataset ***************")
@@ -510,12 +647,14 @@ def post_intermediate_process(message:str):
         prediction_num = post_process_5choice(message)
         if prediction_num == -1:
             prompt = message + "\n\nPlease retrieve the answer from the sentence above. Your response should be one of the following options: Option A, Option B, Option C, Option D, Option E."
-            response_data = ask_gpt4_omni(openai_api_key=os.getenv("OPENAI_API_KEY"), prompt_text=prompt)
+            # [REAL API - GEMINI] Replaced ask_gpt4_omni with Gemini version
+            response_data = ask_gpt4_omni(gemini_api_key=os.getenv("GEMINI_API_KEY"), prompt_text=prompt)
             prediction_num = post_process(response_data)
         return prediction_num
     elif os.getenv("DATASET") == "momaqa":
         prompt = message + "\n\nExtract and output only the content that immediately follows \"- Pred:\" on its line. Do not include any additional text or formatting."
-        response_data = ask_gpt4_omni(openai_api_key=os.getenv("OPENAI_API_KEY"), prompt_text=prompt)
+        # [REAL API - GEMINI] Replaced ask_gpt4_omni with Gemini version
+        response_data = ask_gpt4_omni(gemini_api_key=os.getenv("GEMINI_API_KEY"), prompt_text=prompt)
         return response_data
 
 
@@ -551,7 +690,7 @@ def read_json_file(file_path):
     except Exception as e:
         print(e)
         time.sleep(1)
-        read_json_file(file_path)
+        return read_json_file(file_path)  # [FIX] Add return statement for recursive call
 
 
 def select_data_and_mark_as_processing(file_path):
@@ -801,6 +940,9 @@ def prepare_intermediate_steps(steps):
         sanitized.append((filtered_action, output))
     return sanitized
 
+
+# [REAL API - GEMINI] Alias for easier importing
+ask_gemini_omni = ask_gpt4_omni
 
 
 if __name__ == "__main__":

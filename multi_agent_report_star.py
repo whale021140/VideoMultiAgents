@@ -5,11 +5,12 @@ import operator
 import functools
 from typing import Annotated, Any, Dict, List, Optional, Sequence, TypedDict
 from langgraph.graph import StateGraph, END
-from langchain.agents import AgentExecutor, create_openai_tools_agent
+from langchain.agents import AgentExecutor
+from langchain_gemini_agent import create_gemini_tools_agent
 from langchain.output_parsers.openai_functions import JsonOutputFunctionsParser
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
+from langchain_gemini_wrapper import ChatGemini
 from collections import Counter
 
 
@@ -22,22 +23,23 @@ from util import post_process, create_agent_prompt, create_star_organizer_prompt
 
 from dotenv import load_dotenv
 load_dotenv()
-openai_api_key = os.getenv("OPENAI_API_KEY")
+gemini_api_key = os.getenv("GEMINI_API_KEY")
+
+if not gemini_api_key:
+    raise ValueError("[REAL API - GEMINI] GEMINI_API_KEY environment variable not set")
 
 
-llm = ChatOpenAI(
-    api_key=openai_api_key,
-    model='gpt-4o',
-    temperature=0.0,
-    disable_streaming=True
-    )
+llm = ChatGemini(
+    api_key=gemini_api_key,
+    model_name='gemini-2.0-flash',
+    temperature=0.0
+)
 
-llm_openai = ChatOpenAI(
-    api_key=openai_api_key,
-    model='gpt-4o',
-    temperature=0.7, # o1 model only sippors temperature 1.0
-    disable_streaming=True
-    )
+llm_openai = ChatGemini(
+    api_key=gemini_api_key,
+    model_name='gemini-2.0-flash',
+    temperature=0.7
+)
 
 
 def create_agent(llm, tools: list, system_prompt: str):
@@ -48,7 +50,8 @@ def create_agent(llm, tools: list, system_prompt: str):
             MessagesPlaceholder(variable_name="agent_scratchpad"),
         ]
     )
-    agent = create_openai_tools_agent(llm, tools, prompt)
+    # [REAL API - GEMINI] Replaced create_openai_tools_agent with create_gemini_tools_agent
+    agent = create_gemini_tools_agent(llm, tools, prompt)
     executor = AgentExecutor(agent=agent, tools=tools, return_intermediate_steps=True) # to return intermediate steps
     return executor
 
